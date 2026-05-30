@@ -327,13 +327,20 @@ async def run_incident(run: RunState) -> None:
 
     try:
         from app.clients import github_pr
-        # In cloud mode the branch is already on origin (the patcher
-        # committed via the GitHub Contents API). In desktop/hook mode
-        # the patch lives in the local workdir and needs `git push`.
-        if settings.KIRO_MODE != "cloud":
+        from app.clients.kiro import _is_cloud_environment
+        # If we're effectively in cloud mode (cloud configured OR no
+        # local git workdir / Kiro binary) the branch is already on
+        # origin via the Contents API push — skip `git push` entirely.
+        # In a real local-dev setup we still need to push.
+        skip_push = settings.KIRO_MODE == "cloud" or _is_cloud_environment()
+        if not skip_push:
             push_ok = await _push_branch(run.branch)
             if not push_ok:
-                raise RuntimeError(f"failed to push branch {run.branch} to origin")
+                logger.warning(
+                    "[%s] SHIP: git push failed, attempting PR open anyway "
+                    "(branch may already be on origin via API)",
+                    run.run_id,
+                )
         pr = await github_pr.open_pr(run.branch, run.incident, run.last_kane)
         run.pr_url = pr.url
         await emit("pr_opened", pr_url=pr.url, proof_url=run.last_kane.test_url)

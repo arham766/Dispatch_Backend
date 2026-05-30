@@ -113,19 +113,28 @@ export default function IncidentsPage() {
         router.push("/projects");
         return;
       }
-      if (repo.is_local_loop) {
-        const r = await api.triggerLocal({
-          service: "checkout",
-          symptom: `Checkout 500 on pay — ${repo.full_name}`,
-          suspect_url: repo.deploy_url,
-          repro_flow: "flows/checkout_test.md",
-          recent_diff_hint: "payment.js",
-        });
-        router.push(`/incident/${r.run_id}`);
-      } else {
-        const { incident_id } = await api.triggerRepo(repo.id);
-        router.push(`/incident/${incident_id}`);
-      }
+      const newRunId = repo.is_local_loop
+        ? (await api.triggerLocal({
+            service: "checkout",
+            symptom: `Checkout 500 on pay — ${repo.full_name}`,
+            suspect_url: repo.deploy_url,
+            repro_flow: "flows/checkout_test.md",
+            recent_diff_hint: "payment.js",
+          })).run_id
+        : (await api.triggerRepo(repo.id)).incident_id;
+
+      // Stay on this page — swap the displayed incident in place so the
+      // dashboard immediately re-binds: WebSocket subscribes to the new
+      // run, LiveLogs starts ticking, Notifications populate, no
+      // navigation. URL stays /incidents.
+      const snap = await api.getIncident(newRunId);
+      setInc(snapshotToIncident(snap, repo));
+      const realDiff = await fetchDiff({
+        repoFullName: repo.full_name,
+        headBranch: snap.branch,
+        hint: snap.incident.recent_diff_hint,
+      });
+      setDiff(realDiff);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Trigger failed");
     } finally {
@@ -267,12 +276,6 @@ export default function IncidentsPage() {
                   {triggering ? "Firing…" : "Trigger another run"}
                 </button>
               )}
-              <Link
-                href={`/incident/${inc.id}`}
-                className="text-sm text-white bg-white/10 hover:bg-white/20 rounded-md px-3.5 py-2"
-              >
-                Open live monitor ↗
-              </Link>
               <Link
                 href="/projects"
                 className="text-sm text-white/80 bg-white/[0.04] hover:bg-white/10 rounded-md px-3.5 py-2"

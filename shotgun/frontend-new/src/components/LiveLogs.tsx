@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useIncidentStream } from "@/lib/useIncidentStream";
+import { useIncidentStream, type LoopEvent } from "@/lib/useIncidentStream";
 
 interface LogLine {
   id: number;
@@ -9,6 +9,20 @@ interface LogLine {
   arrow: "→" | "←" | "·" | "✓" | "+";
   text: string;
 }
+
+const MAX_LINES = 7;
+const TICK_MS = 700;
+const START_T = 1.2;
+const T_STEP = 0.7;
+
+function arrowColor(a: LogLine["arrow"]): string {
+  if (a === "✓") return "#4ade80";
+  if (a === "+") return "#e85d1a";
+  if (a === "→" || a === "←") return "#ffe4a8";
+  return "rgba(255,255,255,0.4)";
+}
+
+// ── Canned demo feeds (only used on pages without a live runId) ─────
 
 const KIRA_FEED: Omit<LogLine, "id" | "time">[] = [
   { arrow: "→", text: "kane · payload" },
@@ -34,19 +48,9 @@ const KANE_FEED: Omit<LogLine, "id" | "time">[] = [
   { arrow: "·", text: "idle" },
 ];
 
-const MAX_LINES = 7;
-const TICK_MS = 700;
-const START_T = 1.2;
-const T_STEP = 0.7;
+// ── Cycling fake feed (no runId — landing page demo only) ─────────
 
-function arrowColor(a: LogLine["arrow"]): string {
-  if (a === "✓") return "#4ade80";
-  if (a === "+") return "#e85d1a";
-  if (a === "→" || a === "←") return "#ffe4a8";
-  return "rgba(255,255,255,0.4)";
-}
-
-function useFeed(feed: Omit<LogLine, "id" | "time">[]) {
+function useFakeFeed(feed: Omit<LogLine, "id" | "time">[]) {
   const [lines, setLines] = useState<LogLine[]>(() =>
     feed.slice(0, 3).map((l, i) => ({
       ...l,
@@ -78,6 +82,134 @@ function useFeed(feed: Omit<LogLine, "id" | "time">[]) {
   return lines;
 }
 
+// ── Real-events feeds (runId present) ─────────────────────────────
+
+interface RealLine extends LogLine {
+  agent: "kiro" | "kane";
+}
+
+/**
+ * Convert WebSocket events into per-column real-time log lines.
+ * Each line is tagged with the actual elapsed seconds since the
+ * incident's first known timestamp, and consecutive identical
+ * (arrow, text) pairs in the same column are deduped.
+ */
+function buildRealFeeds(events: LoopEvent[]): {
+  kiro: RealLine[];
+  kane: RealLine[];
+  currentlyDoing: string;
+} {
+  if (events.length === 0) {
+    return { kiro: [], kane: [], currentlyDoing: "" };
+  }
+
+  const t0 = (events[0] as { ts?: number }).ts ?? Date.now() / 1000;
+
+  const kiro: RealLine[] = [];
+  const kane: RealLine[] = [];
+  let nextId = 0;
+  let currentlyDoing = "";
+
+  function pushIfNew(col: RealLine[], line: Omit<RealLine, "id" | "time">, ts: number) {
+    const last = col[col.length - 1];
+    if (last && last.arrow === line.arrow && last.text === line.text) return;
+    col.push({
+      ...line,
+      id: nextId++,
+      time: `${(ts - t0).toFixed(1)}s`,
+    });
+  }
+
+  for (const ev of events) {
+    const ts = (ev as { ts?: number }).ts ?? Date.now() / 1000;
+    if (ev.event === "kane_step") {
+      const step = String(ev.step || "step");
+      const status = String(ev.status || "");
+      let arrow: LogLine["arrow"] = "·";
+      if (status === "passed") arrow = "✓";
+      else if (status === "running") arrow = "→";
+      pushIfNew(
+        kane,
+        { arrow, text: `${step} · ${status || "run"}`, agent: "kane" },
+        ts,
+      );
+      if (status === "running") {
+        currentlyDoing = `Kane · ${step}`;
+      }
+    } else if (ev.event === "kane_result") {
+      const passed = !!ev.passed;
+      pushIfNew(
+        kane,
+        {
+          arrow: passed ? "✓" : "·",
+          text: `kane · ${passed ? "green" : "red"}`,
+          agent: "kane",
+        },
+        ts,
+      );
+      currentlyDoing = passed ? "Kane verified the fix." : "Kane reproduced the bug.";
+    } else if (ev.event === "patch") {
+      pushIfNew(
+        kiro,
+        { arrow: "→", text: `kiro · ${String(ev.branch || "stage diff")}`, agent: "kiro" },
+        ts,
+      );
+      currentlyDoing = `Kiro committed ${String(ev.branch || "the fix")}.`;
+    } else if (ev.event === "pr_opened") {
+      pushIfNew(kiro, { arrow: "+", text: "pr opened", agent: "kiro" }, ts);
+      currentlyDoing = "Pull request is live.";
+    } else if (ev.event === "awaiting_approval") {
+      pushIfNew(
+        kiro,
+        { arrow: "←", text: "kiro · awaiting decision", agent: "kiro" },
+        ts,
+      );
+      currentlyDoing = "Awaiting your decision.";
+    } else if (ev.event === "state_change") {
+      const s = String(ev.state || "");
+      if (s === "INTAKE") currentlyDoing = "Incident received.";
+      else if (s === "REPRODUCE") {
+        currentlyDoing = "Capturing failing flow…";
+        pushIfNew(kane, { arrow: "→", text: "kane · reproduce", agent: "kane" }, ts);
+      } else if (s === "PATCH") {
+        currentlyDoing = "Kiro is writing the fix…";
+        pushIfNew(kiro, { arrow: "→", text: "kiro · patch", agent: "kiro" }, ts);
+      } else if (s === "VERIFY") {
+        currentlyDoing = "Kane is verifying the fix…";
+        pushIfNew(kane, { arrow: "→", text: "kane · verify", agent: "kane" }, ts);
+      } else if (s === "CONFIRM") {
+        currentlyDoing = "Confirming, replaying the flow…";
+        pushIfNew(kane, { arrow: "→", text: "kane · confirm", agent: "kane" }, ts);
+      } else if (s === "SHIP") {
+        currentlyDoing = "Opening the pull request…";
+        pushIfNew(kiro, { arrow: "→", text: "kiro · ship", agent: "kiro" }, ts);
+      } else if (s === "RECORD") {
+        currentlyDoing = "Recording the run…";
+        pushIfNew(kiro, { arrow: "→", text: "kiro · record", agent: "kiro" }, ts);
+      } else if (s === "RESOLVED") {
+        currentlyDoing = "✅ Resolved.";
+        pushIfNew(kane, { arrow: "✓", text: "verify passed", agent: "kane" }, ts);
+        pushIfNew(kiro, { arrow: "✓", text: "resolved", agent: "kiro" }, ts);
+      } else if (s === "ESCALATE") {
+        currentlyDoing = "Escalated.";
+        pushIfNew(kiro, { arrow: "·", text: "escalated", agent: "kiro" }, ts);
+      }
+    }
+  }
+
+  // Trim each column to the last MAX_LINES so the panel doesn't grow.
+  const trim = (xs: RealLine[]) =>
+    xs.length > MAX_LINES ? xs.slice(xs.length - MAX_LINES) : xs;
+
+  return {
+    kiro: trim(kiro),
+    kane: trim(kane),
+    currentlyDoing,
+  };
+}
+
+// ── Component ────────────────────────────────────────────────────
+
 export function LiveLogs({ runId }: { runId?: string | null } = {}) {
   const [active, setActive] = useState<"kiro" | "kane">("kiro");
   useEffect(() => {
@@ -88,39 +220,50 @@ export function LiveLogs({ runId }: { runId?: string | null } = {}) {
     return () => clearInterval(id);
   }, []);
 
-  // If runId is provided, derive real-time feeds from the orchestrator's
-  // WebSocket. Otherwise show a single "waiting" line per column so the
-  // user never sees stale canned data on a real run that just hasn't
-  // emitted anything yet.
   const { events, connected } = useIncidentStream(runId ?? null);
-  const { kiroFeed, kaneFeed } = useMemo(() => {
-    if (!runId) {
-      // No incident in scope at all — keep the demo feeds so the panel
-      // still looks alive on the landing dashboard.
-      return { kiroFeed: KIRA_FEED, kaneFeed: KANE_FEED };
-    }
-    if (events.length === 0) {
-      const placeholder: Omit<LogLine, "id" | "time">[] = [
-        { arrow: "·", text: connected ? "waiting for events…" : "connecting…" },
-      ];
-      return { kiroFeed: placeholder, kaneFeed: placeholder };
-    }
-    return splitEventsByAgent(events);
-  }, [events, runId, connected]);
+
+  // Tag each event with the time we received it so we get real elapsed
+  // timings in the column instead of the synthetic cycle clock.
+  const stampedEvents = useRealtimeStamps(events);
+
+  const real = useMemo(
+    () => buildRealFeeds(stampedEvents),
+    [stampedEvents],
+  );
 
   return (
     <div className="rounded bg-black border border-white/10 p-3">
+      {/* Currently-doing header — only when a real run is in scope */}
+      {runId ? (
+        <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10">
+          <span className="text-[11px] text-white truncate">
+            {real.currentlyDoing || (connected ? "Waiting for events…" : "Connecting…")}
+          </span>
+          <span
+            className="shrink-0 ml-2 inline-flex items-center gap-1 text-[10px] text-white/40 uppercase tracking-wider"
+          >
+            <span
+              className="inline-block w-1.5 h-1.5 rounded-full"
+              style={{ background: connected ? "#4ade80" : "#9c9c9c" }}
+            />
+            live
+          </span>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-2 gap-2">
         <LogColumn
           label="Kiro"
           avatar="/kira.jpg"
-          feed={kiroFeed}
+          fixedFeed={runId ? real.kiro : null}
+          fallbackFeed={KIRA_FEED}
           active={active === "kiro"}
         />
         <LogColumn
           label="Kane"
           avatar="/kane.png"
-          feed={kaneFeed}
+          fixedFeed={runId ? real.kane : null}
+          fallbackFeed={KANE_FEED}
           active={active === "kane"}
         />
       </div>
@@ -129,73 +272,53 @@ export function LiveLogs({ runId }: { runId?: string | null } = {}) {
 }
 
 /**
- * Sort WebSocket events into Kiro vs Kane columns.
- *
- *   Kiro column:  patch, state_change=PATCH/SHIP/RECORD, pr_opened
- *   Kane column:  kane_step, kane_result, state_change=REPRODUCE/VERIFY/CONFIRM
- *
- * Each event is mapped to one of the column's existing arrow/text
- * vocab so visual styling never changes.
+ * Decorate events with a `ts` (epoch seconds) the moment we observe
+ * them, so the rendered times reflect when the backend really emitted
+ * them — not when the array was built.
  */
-function splitEventsByAgent(events: { event: string; state?: string; [k: string]: unknown }[]) {
-  const kiro: Omit<LogLine, "id" | "time">[] = [];
-  const kane: Omit<LogLine, "id" | "time">[] = [];
-
-  for (const ev of events) {
-    if (ev.event === "kane_step") {
-      const step = String(ev.step || "step");
-      const status = String(ev.status || "");
-      let arrow: LogLine["arrow"] = "·";
-      if (status === "passed") arrow = "✓";
-      else if (status === "running") arrow = "→";
-      else if (status === "failed") arrow = "·";
-      kane.push({ arrow, text: `${step} · ${status || "run"}` });
-    } else if (ev.event === "kane_result") {
-      const passed = !!ev.passed;
-      kane.push({
-        arrow: passed ? "✓" : "·",
-        text: `kane · ${passed ? "200 OK" : "red"}`,
-      });
-    } else if (ev.event === "patch") {
-      kiro.push({ arrow: "→", text: `kiro · ${String(ev.branch || "stage diff")}` });
-    } else if (ev.event === "pr_opened") {
-      kiro.push({ arrow: "+", text: "pr opened" });
-    } else if (ev.event === "awaiting_approval") {
-      kiro.push({ arrow: "←", text: "kiro · awaiting decision" });
-    } else if (ev.event === "state_change") {
-      const s = String(ev.state || "");
-      if (["PATCH", "SHIP", "RECORD"].includes(s)) {
-        kiro.push({ arrow: "→", text: `kiro · ${s.toLowerCase()}` });
-      } else if (["REPRODUCE", "VERIFY", "CONFIRM", "REVIEW"].includes(s)) {
-        kane.push({ arrow: "→", text: `kane · ${s.toLowerCase()}` });
-      } else if (s === "RESOLVED") {
-        kiro.push({ arrow: "✓", text: "resolved" });
-        kane.push({ arrow: "✓", text: "verify passed" });
-      } else if (s === "ESCALATE") {
-        kiro.push({ arrow: "·", text: "escalated" });
+function useRealtimeStamps(events: LoopEvent[]): (LoopEvent & { ts: number })[] {
+  const tsRef = useRef(new Map<LoopEvent, number>());
+  return useMemo(() => {
+    const out: (LoopEvent & { ts: number })[] = [];
+    for (const ev of events) {
+      let ts = tsRef.current.get(ev);
+      if (!ts) {
+        ts = Date.now() / 1000;
+        tsRef.current.set(ev, ts);
       }
+      out.push({ ...ev, ts });
     }
-  }
-  // Fall back to canned feeds if we somehow produced nothing — keeps
-  // the panel visually populated.
-  return {
-    kiroFeed: kiro.length ? kiro : KIRA_FEED,
-    kaneFeed: kane.length ? kane : KANE_FEED,
-  };
+    return out;
+  }, [events]);
 }
 
 function LogColumn({
   label,
   avatar,
-  feed,
+  fixedFeed,
+  fallbackFeed,
   active,
 }: {
   label: string;
   avatar: string;
-  feed: Omit<LogLine, "id" | "time">[];
+  fixedFeed: RealLine[] | null;
+  fallbackFeed: Omit<LogLine, "id" | "time">[];
   active: boolean;
 }) {
-  const lines = useFeed(feed);
+  const cycledLines = useFakeFeed(fallbackFeed);
+  // When a real feed is provided, render those lines directly (no
+  // ticking, no cycling). The empty state shows a single "waiting…"
+  // line so the column still has structure.
+  let displayed: LogLine[];
+  if (fixedFeed !== null) {
+    displayed =
+      fixedFeed.length > 0
+        ? fixedFeed
+        : [{ id: -1, time: "—", arrow: "·", text: "waiting…" }];
+  } else {
+    displayed = cycledLines;
+  }
+
   return (
     <div
       className="min-w-0 rounded p-2 transition-shadow"
@@ -219,14 +342,14 @@ function LogColumn({
         className="space-y-1 text-[11px] leading-snug overflow-hidden"
         style={{ minHeight: `calc(${MAX_LINES} * 1.375 * 11px + ${MAX_LINES - 1} * 4px)` }}
       >
-        {lines.map((l, i) => {
-          const isLast = i === lines.length - 1;
+        {displayed.map((l, i) => {
+          const isLast = i === displayed.length - 1;
           return (
             <li
               key={l.id}
               className="flex items-baseline gap-1.5 truncate"
               style={{
-                opacity: isLast ? 1 : 0.7 - (lines.length - 1 - i) * 0.08,
+                opacity: isLast ? 1 : 0.7 - (displayed.length - 1 - i) * 0.08,
               }}
             >
               <span className="text-white/40 shrink-0">{l.time}</span>

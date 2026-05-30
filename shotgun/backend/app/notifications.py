@@ -116,93 +116,182 @@ async def _send_email(run: RunState, kind: str, ctx: dict) -> None:
 
 
 def _render_email(run: RunState, kind: str, ctx: dict) -> tuple[str, str]:
-    """Pick subject + HTML body per event kind."""
+    """Pick subject + HTML body per event kind.
+
+    Each email leads with a distinct colored hero banner so the user can
+    tell incident_created vs kane_red vs pr_opened apart at a glance —
+    not buried under an identical "Shotgun · checkout" header on every
+    one. The PR email leads with the GitHub button as the primary CTA.
+    """
     inc = run.incident
-    base_style = (
+    page_style = (
         "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-        "max-width:560px;margin:0 auto;padding:24px;color:#1d1d1f"
-    )
-    header = (
-        f'<div style="{base_style}">'
-        f'<h2 style="margin:0 0 8px 0">Shotgun · {inc.service}</h2>'
-        f'<p style="color:#6e6e73;margin:0 0 16px 0">{inc.symptom}</p>'
+        "max-width:560px;margin:0 auto;padding:0;color:#1d1d1f;"
+        "background:#ffffff"
     )
     footer = (
-        f'<hr style="border:none;border-top:1px solid #d2d2d7;margin:20px 0">'
-        f'<p style="color:#86868b;font-size:12px">Run <code>{run.run_id}</code> · '
-        f'<a href="{settings.PUBLIC_APP_URL}?run={run.run_id}">Live monitor</a></p>'
-        f'</div>'
+        f'<div style="padding:20px 24px;border-top:1px solid #d2d2d7">'
+        f'<p style="color:#86868b;font-size:12px;margin:0">'
+        f'Run <code>{run.run_id}</code> · '
+        f'<a href="{settings.PUBLIC_APP_URL}?run={run.run_id}" '
+        f'style="color:#0071e3">Live monitor</a> · '
+        f'<span style="font-family:monospace">{inc.service}</span>'
+        f'</p></div></div>'
     )
+
+    def hero(emoji: str, color: str, title: str, sub: str) -> str:
+        return (
+            f'<div style="{page_style}">'
+            f'<div style="padding:32px 24px 20px 24px;background:{color};'
+            f'color:white">'
+            f'<div style="font-size:28px;line-height:1;margin:0 0 12px 0">{emoji}</div>'
+            f'<h1 style="margin:0 0 6px 0;font-size:22px;font-weight:600">'
+            f'{title}</h1>'
+            f'<p style="margin:0;opacity:0.85;font-size:14px">{sub}</p>'
+            f'</div>'
+            f'<div style="padding:24px">'
+        )
+
+    def button(url: str, label: str, color: str = "#0071e3") -> str:
+        return (
+            f'<a href="{url}" '
+            f'style="display:inline-block;padding:12px 22px;background:{color};'
+            f'color:white;text-decoration:none;border-radius:8px;'
+            f'font-weight:600;font-size:14px">{label}</a>'
+        )
 
     if kind == "incident_created":
         return (
-            f"[Shotgun] {inc.service}: incident received",
-            header
-            + '<p>An incident just landed and Shotgun is on it.</p>'
-            + '<p><strong>Next:</strong> Kane will try to reproduce the failure '
-              'against your live deploy. Watch live →</p>'
+            f"🔔 Incident received · {inc.service}",
+            hero(
+                "🔔",
+                "#1d1d1f",
+                "We're on it.",
+                f"Just received an incident for {inc.service}.",
+            )
+            + f'<p style="margin:0 0 12px 0;color:#1d1d1f;font-size:15px">'
+              f'<strong>Symptom:</strong> {inc.symptom}</p>'
+            + '<p style="margin:0 0 20px 0;color:#6e6e73;font-size:13px;line-height:1.5">'
+              'Kane is reproducing the failure against your live deploy now. '
+              'You will get the next email once we have a verdict — usually '
+              'within ~60 seconds.</p>'
+            + button(
+                f"{settings.PUBLIC_APP_URL}?run={run.run_id}",
+                "Open live monitor →",
+            )
             + footer,
         )
     if kind == "kane_red_confirmed":
         return (
-            f"[Shotgun] {inc.service}: bug confirmed, fixing now",
-            header
-            + '<p>✅ <strong>Kane reproduced the bug.</strong></p>'
-            + f'<blockquote style="border-left:3px solid #d2d2d7;padding-left:12px;'
-              f'color:#1d1d1f">{ctx.get("summary", "")[:600]}</blockquote>'
-            + '<p>Kiro is now writing a fix. You will get another email when it'
-              ' is verified.</p>'
+            f"🔴 Bug reproduced — Kiro is fixing · {inc.service}",
+            hero(
+                "🔴",
+                "#dc2626",
+                "Kane reproduced the bug.",
+                "Kiro is writing a fix right now.",
+            )
+            + '<p style="margin:0 0 12px 0;color:#1d1d1f;font-size:14px">'
+              '<strong>Kane verdict:</strong></p>'
+            + f'<blockquote style="border-left:3px solid #dc2626;padding:8px 14px;'
+              f'margin:0 0 20px 0;color:#1d1d1f;font-size:13px;background:#fef2f2">'
+              f'{ctx.get("summary", "")[:600]}</blockquote>'
+            + '<p style="margin:0 0 20px 0;color:#6e6e73;font-size:13px;line-height:1.5">'
+              'Kiro is committing a candidate fix to a new branch. You will '
+              'get another email when verification passes.</p>'
+            + button(
+                f"{settings.PUBLIC_APP_URL}?run={run.run_id}",
+                "Watch the fix happen →",
+            )
             + footer,
         )
     if kind == "kane_green":
         return (
-            f"[Shotgun] {inc.service}: fix verified ✅",
-            header
-            + '<p>✅ <strong>Kane verified the fix passes the regression flow.</strong></p>'
-            + f'<p>Confirmed {ctx.get("confirmation_runs", 0)}× green from cache. '
-              'A PR is ready to open with your approval.</p>'
-            + f'<p><a href="{settings.PUBLIC_APP_URL}?run={run.run_id}" '
-              'style="display:inline-block;padding:10px 16px;background:#0071e3;'
-              'color:white;text-decoration:none;border-radius:8px">'
-              'Open the PR →</a></p>'
+            f"🟢 Fix verified — approve the PR · {inc.service}",
+            hero(
+                "🟢",
+                "#16a34a",
+                "Fix verified.",
+                f"Confirmed {ctx.get('confirmation_runs', 0)}× green in a row. "
+                "Tap to open the PR.",
+            )
+            + '<p style="margin:0 0 20px 0;color:#1d1d1f;font-size:14px;line-height:1.5">'
+              'Kiro\'s patch passed Kane\'s regression flow. One tap from you '
+              'opens the pull request on GitHub with the Kane proof embedded.'
+              '</p>'
+            + button(
+                f"{settings.PUBLIC_APP_URL}?run={run.run_id}",
+                "✅ Approve & open PR",
+                color="#16a34a",
+            )
             + footer,
         )
     if kind == "pr_opened":
-        pr_url = ctx.get("pr_url", "#")
+        pr_url = ctx.get("pr_url") or "#"
+        # Try to derive PR number from URL: github.com/<repo>/pull/<N>
+        pr_label = "View PR on GitHub"
+        try:
+            num = pr_url.rstrip("/").split("/")[-1]
+            if num.isdigit():
+                pr_label = f"View PR #{num} on GitHub"
+        except Exception:
+            pass
         return (
-            f"[Shotgun] {inc.service}: PR opened",
-            header
-            + '<p>📝 The pull request is live with Kane proof attached.</p>'
-            + f'<p><a href="{pr_url}" '
-              'style="display:inline-block;padding:10px 16px;background:#0071e3;'
-              f'color:white;text-decoration:none;border-radius:8px">View PR →</a></p>'
+            f"📝 PR opened on GitHub · {inc.service}",
+            hero(
+                "📝",
+                "#0071e3",
+                "Pull request is live.",
+                "Click below to review on GitHub.",
+            )
+            + f'<p style="margin:0 0 20px 0;color:#1d1d1f;font-size:14px;line-height:1.5">'
+              f'The PR includes the verified diff and a link to the Kane '
+              f'replay trace. Approve and merge when ready — Shotgun will '
+              f'continue watching the deploy.</p>'
+            + button(pr_url, f"{pr_label} →")
+            + f'<p style="margin:14px 0 0 0;color:#6e6e73;font-size:12px;'
+              f'word-break:break-all">'
+              f'<a href="{pr_url}" style="color:#0071e3">{pr_url}</a></p>'
             + footer,
         )
     if kind == "preview_ready":
         url = ctx.get("preview_url", "#")
         return (
-            f"[Shotgun] {inc.service}: preview deployed",
-            header
-            + f'<p>🚀 Preview deploy of the fix is live.</p>'
-            + f'<p><a href="{url}">{url}</a></p>'
+            f"🚀 Preview deployed · {inc.service}",
+            hero(
+                "🚀",
+                "#0071e3",
+                "Preview is live.",
+                "Try the fix in the staging environment.",
+            )
+            + button(url, "Open preview →")
             + footer,
         )
     if kind == "escalated":
         return (
-            f"[Shotgun] {inc.service}: needs you",
-            header
-            + '<p>⚠️ <strong>Shotgun could not converge.</strong></p>'
-            + f'<p style="color:#dc2626">Reason: {ctx.get("reason", "unknown")}</p>'
-            + f'<p>Attempts: {ctx.get("attempts", 0)} of '
-              f'{settings.RETRY_BUDGET}. The full timeline is recorded — open '
-              'the live monitor to inspect.</p>'
+            f"⚠️ Needs you — could not auto-fix · {inc.service}",
+            hero(
+                "⚠️",
+                "#d97706",
+                "Loop could not converge.",
+                "We need a human to take a look.",
+            )
+            + f'<p style="margin:0 0 12px 0;color:#1d1d1f;font-size:14px">'
+              f'<strong>Reason:</strong> {ctx.get("reason", "unknown")}</p>'
+            + f'<p style="margin:0 0 20px 0;color:#6e6e73;font-size:13px">'
+              f'Attempts: {ctx.get("attempts", 0)} of '
+              f'{settings.RETRY_BUDGET}. The full timeline is recorded.</p>'
+            + button(
+                f"{settings.PUBLIC_APP_URL}?run={run.run_id}",
+                "Inspect timeline →",
+                color="#d97706",
+            )
             + footer,
         )
 
     # Fallback for unknown kinds
     return (
-        f"[Shotgun] {inc.service}: {kind}",
-        header + f'<p>Event: {kind}</p>' + footer,
+        f"Shotgun · {kind} · {inc.service}",
+        hero("•", "#1d1d1f", kind, inc.symptom) + footer,
     )
 
 
