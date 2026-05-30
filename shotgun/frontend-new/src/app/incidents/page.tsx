@@ -226,14 +226,47 @@ export default function IncidentsPage() {
             </p>
 
             <div className="mt-5 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={handleTrigger}
-                disabled={triggering}
-                className="text-sm text-black bg-white hover:bg-white/90 disabled:opacity-60 rounded-md px-3.5 py-2"
-              >
-                {triggering ? "Firing…" : "Trigger another run"}
-              </button>
+              {/* HUMAN_GATE — show a prominent Approve button so SHIP fires
+                  and the PR opens. Without this the loop blocks forever. */}
+              {inc.status === "AWAITING_DECISION" ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await api.approveIncident(inc.id);
+                      } catch (e: unknown) {
+                        setErr(e instanceof Error ? e.message : "Approve failed");
+                      }
+                    }}
+                    className="text-sm text-black bg-emerald-300 hover:bg-emerald-200 rounded-md px-4 py-2"
+                  >
+                    ✅ Open the PR
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await api.rejectIncident(inc.id);
+                      } catch (e: unknown) {
+                        setErr(e instanceof Error ? e.message : "Reject failed");
+                      }
+                    }}
+                    className="text-sm text-white bg-white/10 hover:bg-white/20 rounded-md px-3.5 py-2"
+                  >
+                    Stand down
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleTrigger}
+                  disabled={triggering}
+                  className="text-sm text-black bg-white hover:bg-white/90 disabled:opacity-60 rounded-md px-3.5 py-2"
+                >
+                  {triggering ? "Firing…" : "Trigger another run"}
+                </button>
+              )}
               <Link
                 href={`/incident/${inc.id}`}
                 className="text-sm text-white bg-white/10 hover:bg-white/20 rounded-md px-3.5 py-2"

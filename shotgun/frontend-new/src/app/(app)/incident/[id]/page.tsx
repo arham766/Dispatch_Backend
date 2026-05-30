@@ -108,7 +108,28 @@ export default function IncidentDetailPage({
             Updated {new Date(incident.updated_at).toLocaleString()}
           </p>
         </div>
-        <PrButton prUrl={incident.pr_url} />
+        <div className="flex flex-wrap items-center gap-2">
+          {/* HUMAN_GATE — Approve unblocks SHIP, which opens the real PR. */}
+          {incident.status === "AWAITING_DECISION" ? (
+            <>
+              <button
+                type="button"
+                onClick={() => api.approveIncident(incident.id)}
+                className="text-sm text-black bg-emerald-300 hover:bg-emerald-200 rounded-md px-4 py-2"
+              >
+                ✅ Open the PR
+              </button>
+              <button
+                type="button"
+                onClick={() => api.rejectIncident(incident.id)}
+                className="text-sm text-white bg-white/10 hover:bg-white/20 rounded-md px-3.5 py-2"
+              >
+                Stand down
+              </button>
+            </>
+          ) : null}
+          <PrButton prUrl={incident.pr_url} />
+        </div>
       </div>
 
       <StatusTimeline status={incident.status} />

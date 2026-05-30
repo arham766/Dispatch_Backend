@@ -327,10 +327,13 @@ async def run_incident(run: RunState) -> None:
 
     try:
         from app.clients import github_pr
-        # Push the branch to origin first — Kiro only commits locally.
-        push_ok = await _push_branch(run.branch)
-        if not push_ok:
-            raise RuntimeError(f"failed to push branch {run.branch} to origin")
+        # In cloud mode the branch is already on origin (the patcher
+        # committed via the GitHub Contents API). In desktop/hook mode
+        # the patch lives in the local workdir and needs `git push`.
+        if settings.KIRO_MODE != "cloud":
+            push_ok = await _push_branch(run.branch)
+            if not push_ok:
+                raise RuntimeError(f"failed to push branch {run.branch} to origin")
         pr = await github_pr.open_pr(run.branch, run.incident, run.last_kane)
         run.pr_url = pr.url
         await emit("pr_opened", pr_url=pr.url, proof_url=run.last_kane.test_url)

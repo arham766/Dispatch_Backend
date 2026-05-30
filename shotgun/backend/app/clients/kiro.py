@@ -870,16 +870,30 @@ class KiroCloudPatcherClient(KiroAgent):
                                incident.recent_diff_hint)
                 return PatchResult(branch=branch, diff_summary="", changed_files=[], ok=False)
 
-            # 4. Get file content + SHA from the branch
+            # 4. Get file content + SHA from the BASE branch directly.
+            # Reading from the just-reset feature branch hits an
+            # eventual-consistency race where GitHub may serve the
+            # PRE-reset content for a few ms; fetching from base
+            # avoids it entirely and gives the same content anyway
+            # (the branch was just reset to this commit).
             r = await c.get(
                 f"{api}/repos/{repo}/contents/{target_path}",
-                params={"ref": branch},
+                params={"ref": base_branch},
             )
             if r.status_code != 200:
                 logger.error("Kiro: could not GET %s — %s", target_path, r.text[:200])
                 return PatchResult(branch=branch, diff_summary="", changed_files=[], ok=False)
             file_obj = r.json()
-            file_sha = file_obj["sha"]
+            # The PUT on the branch needs the SHA of the file _on that branch_,
+            # not on base. Resolve it explicitly so PUT doesn't 422.
+            branch_r = await c.get(
+                f"{api}/repos/{repo}/contents/{target_path}",
+                params={"ref": branch},
+            )
+            file_sha = (
+                branch_r.json().get("sha") if branch_r.status_code == 200
+                else file_obj["sha"]
+            )
             original = base64.b64decode(file_obj["content"]).decode("utf-8", errors="replace")
 
             # 5. Apply recipes
@@ -955,12 +969,45 @@ def _kiro_binary_available() -> bool:
     return False
 
 
+def _workdir_is_local_dir() -> bool:
+    """True iff KIRO_WORKDIR points at a real local directory we can write to.
+
+    Catches the common Render misconfig where someone pastes a URL or
+    leaves the value at "." in a container without the demo repo
+    checked out. When this returns False, hook + desktop modes can't
+    work, so we should force cloud.
+    """
+    wd = settings.KIRO_WORKDIR or ""
+    if not wd:
+        return False
+    if wd.startswith(("http://", "https://")):
+        return False
+    return os.path.isdir(wd)
+
+
+def _is_cloud_environment() -> bool:
+    """Heuristic: are we running on a cloud host with no local resources?
+
+    Triggers cloud mode whenever the box can't actually run the local
+    patcher paths, no matter what the user set in env.
+    """
+    if not _kiro_binary_available():
+        return True
+    if not _workdir_is_local_dir():
+        return True
+    return False
+
+
 def make_kiro_agent() -> KiroAgent:
     """Create the appropriate KiroAgent based on KIRO_MODE setting.
 
-    Auto-detect: if mode is ``desktop`` but no Kiro binary is present
-    (the case on Render and any Linux cloud host), we silently switch
-    to ``cloud`` instead of trying to spawn a missing binary.
+    Aggressive auto-fallback: if the host doesn't look like a usable
+    local dev box (no Kiro binary OR no real workdir), force ``cloud``
+    no matter what env says. This catches:
+
+      * KIRO_MODE=desktop on Render (no Kiro Electron app)
+      * KIRO_MODE=hook with workdir=/tmp or a URL (IsADirectoryError)
+      * Any pasted-wrong-value config
 
     Modes:
         cloud   — GitHub Contents API, no git, no workdir.  Default for prod.
@@ -970,11 +1017,11 @@ def make_kiro_agent() -> KiroAgent:
     """
     mode = settings.KIRO_MODE
 
-    # Auto-fallback when desktop is requested but Kiro is not installed.
-    if mode == "desktop" and not _kiro_binary_available():
+    if mode != "cloud" and _is_cloud_environment():
         logger.warning(
-            "Kiro: KIRO_MODE=desktop but no Kiro binary found on this host. "
-            "Falling back to KIRO_MODE=cloud (GitHub Contents API)."
+            "Kiro: KIRO_MODE=%s but host has no local Kiro (binary=%s, workdir=%s). "
+            "Forcing KIRO_MODE=cloud (GitHub Contents API).",
+            mode, _kiro_binary_available(), settings.KIRO_WORKDIR,
         )
         mode = "cloud"
 
