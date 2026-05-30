@@ -17,6 +17,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+
     # ── Kane CLI ──────────────────────────────────────
     LT_USERNAME: str = ""
     LT_ACCESS_KEY: str = ""
@@ -33,11 +34,11 @@ class Settings(BaseSettings):
     KANE_REAL_PROOF: bool = False
 
     # ── App under test ────────────────────────────────
-    STAGING_BASE_URL: str = "http://localhost:3000"
+    STAGING_BASE_URL: str = "https://dispatch-backend-i50g.onrender.com"
 
     # ── Kiro ──────────────────────────────────────────
-    KIRO_MODE: Literal["desktop", "headless", "hook"] = "desktop"
-    KIRO_WORKDIR: str = "."
+    KIRO_MODE: Literal["desktop", "headless", "hook"] = "hook"
+    KIRO_WORKDIR: str = "/tmp"
     KIRO_TRIGGER_FILE: str = ".shotgun/trigger.json"
 
     # ── GitHub ────────────────────────────────────────
@@ -111,7 +112,7 @@ class Settings(BaseSettings):
     GITHUB_APP_CLIENT_ID: str = ""
     GITHUB_APP_CLIENT_SECRET: str = ""
     GITHUB_APP_WEBHOOK_SECRET: str = ""
-    PUBLIC_APP_URL: str = "http://localhost:3000"
+    PUBLIC_APP_URL: str = "https://dispatch-backend-i50g.onrender.com"
 
     # ── Admin / demo mode ─────────────────────────────
     # Emails in ADMIN_EMAILS get a pre-monitored repo wired through the
