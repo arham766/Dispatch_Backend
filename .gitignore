@@ -1,0 +1,100 @@
+# ──────────────────────────────────────────────────────────────────
+# Shotgun / Dispatch — root .gitignore
+#
+# IMPORTANT: this file keeps secrets out of git. Never delete a rule
+# below without verifying you are not committing a credential.
+#
+# Files that MUST never be committed:
+#   - .env / .env.local — live API keys, GitHub PAT, AgentPhone key,
+#     Resend key, Firebase service account path
+#   - *firebase-adminsdk*.json — Firebase service-account credentials
+#   - data/ — per-tenant installations + repo tokens (will be Postgres
+#     in production, but local JSON store is sensitive in dev too)
+#   - recordings/ — incident replays may contain customer data
+# ──────────────────────────────────────────────────────────────────
+
+# ── Secrets ──────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+!.env.prod.example
+# Firebase service account credentials
+*firebase-adminsdk*.json
+service-account*.json
+# Any leaked-token pattern (defense in depth)
+**/ghp_*
+**/sk_live_*
+
+# ── Build artifacts ──────────────────────────────────
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# ── Python ───────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.coverage
+.coverage.*
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+venv/
+.venv/
+env/
+
+# ── IDE ──────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Shotgun runtime data (per-tenant, never commit) ──
+# Per-user installations, repo tokens, incident metadata
+shotgun/backend/data/
+# Incident recordings (events.ndjson + screenshots)
+shotgun/backend/recordings/
+# Local-loop debug artifacts
+shotgun/backend/_dbg*.out
+shotgun/backend/_dbg.py
+# Stale Kane testmd temp files (regenerated each run)
+shotgun/backend/flows/*_temp.md
+shotgun/backend/flows/*_test_test.md
+shotgun/backend/flows/output-*/
+# Pytest cache
+shotgun/backend/.pytest_recordings/
+
+# ── App-under-test runtime ──────────────────────────
+# The .shotgun/ directory holds steering files Shotgun writes; they
+# are scratch files for the demo, not source.
+app-under-test/.shotgun/
+app-under-test/node_modules/
+
+# ── Frontend ─────────────────────────────────────────
+shotgun/frontend/.next/
+shotgun/frontend/node_modules/
+
+# ── Misc ─────────────────────────────────────────────
+*.log
+.npm/
+.yarn/
+.pnp.*
+
+# ── Local scratch (noise from prior dev sessions) ───
+.claude/
+_dump_*.txt
+_inv_*.txt
+_inventory.txt
+_scan_*.txt
+_scan_*.ps1
+PYTHON_DOCUMENTATION.md
+*.docx

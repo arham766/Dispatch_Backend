@@ -1,0 +1,179 @@
+# ────────────────────────────────────────────────────────────────
+# Shotgun / Dispatch — Render Blueprint
+#
+# One-click deploy to Render. Creates three services + a Postgres
+# database. Secrets must be set in the Render dashboard before the
+# first deploy (see "envVars" with sync: false below).
+#
+#   1. shotgun-backend       — FastAPI orchestrator (HTTP + WS)
+#   2. shotgun-frontend      — Next.js dashboard
+#   3. shotgun-app-under-test — Demo "buggy app" Kane targets
+#   4. shotgun-db            — Postgres for tenants/incidents
+#
+# After deploy:
+#   - Backend reads .env.prod values from Render env
+#   - Frontend reads NEXT_PUBLIC_* env vars at build time
+#   - Postgres URL is auto-wired from the database service
+#
+# Production hardening notes:
+#   - Use Starter+ plan (free tier sleeps after 15min — kills WS)
+#   - Pick the region closest to the demo venue
+#   - Add a custom domain after the first deploy succeeds
+# ────────────────────────────────────────────────────────────────
+
+databases:
+  - name: shotgun-db
+    databaseName: shotgun
+    user: shotgun
+    plan: free
+    region: oregon
+    postgresMajorVersion: "16"
+
+services:
+  # ── Backend (FastAPI) ────────────────────────────
+  - type: web
+    name: shotgun-backend
+    runtime: python
+    plan: starter            # free tier sleeps; WS needs always-on
+    region: oregon
+    rootDir: shotgun/backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /healthz
+    envVars:
+      # Auto-wired from the database service
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shotgun-db
+          property: connectionString
+
+      # Auto-set by Render
+      - key: PORT
+        value: "10000"
+
+      # Public URL of this very backend service. Render injects
+      # RENDER_EXTERNAL_URL after first deploy; set PUBLIC_APP_URL
+      # in the dashboard once you know your hostname.
+      - key: PUBLIC_APP_URL
+        sync: false
+
+      # Service knobs that are safe to commit
+      - key: KANE_HEADLESS
+        value: "true"
+      - key: KANE_FAST_MODE
+        value: "true"
+      - key: KIRO_MODE
+        value: "hook"
+      - key: RETRY_BUDGET
+        value: "4"
+      - key: CONFIRMATION_RUNS
+        value: "2"
+      - key: KANE_TIMEOUT_SECONDS
+        value: "180"
+      - key: KANE_REVIEW_ENABLED
+        value: "true"
+      - key: KANE_REVIEW_MODE
+        value: "chained"
+      - key: KANE_REVIEW_BUDGET
+        value: "2"
+      - key: INTAKE_MODE
+        value: "webhook"
+      - key: RECORD_LOOPS
+        value: "true"
+      - key: RECORDINGS_DIR
+        value: "/var/data/recordings"
+      - key: RECORD_RETENTION
+        value: "200"
+      - key: RESEND_FROM
+        value: "onboarding@resend.dev"
+      - key: RESEND_ENABLED
+        value: "true"
+      - key: AGENTPHONE_ENABLED
+        value: "true"
+      - key: AGENTPHONE_API_URL
+        value: "https://api.agentphone.ai"
+
+      # Secrets — set these manually in the Render dashboard before
+      # first deploy (sync: false hides them from this file)
+      - key: LT_USERNAME
+        sync: false
+      - key: LT_ACCESS_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_REPO
+        sync: false
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_PRIVATE_KEY
+        sync: false
+      - key: GITHUB_APP_CLIENT_ID
+        sync: false
+      - key: GITHUB_APP_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_APP_WEBHOOK_SECRET
+        sync: false
+      - key: AGENTPHONE_API_KEY
+        sync: false
+      - key: AGENTPHONE_AGENT_ID
+        sync: false
+      - key: ONCALL_PHONE
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_NOTIFY
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      # Paste the entire service-account JSON inline here
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: STAGING_BASE_URL
+        sync: false
+    # Persistent disk for recordings + ledger
+    disk:
+      name: shotgun-data
+      mountPath: /var/data
+      sizeGB: 1
+
+  # ── Frontend (Next.js) ───────────────────────────
+  - type: web
+    name: shotgun-frontend
+    runtime: node
+    plan: starter
+    region: oregon
+    rootDir: shotgun/frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NEXT_PUBLIC_API
+        sync: false              # set to https://shotgun-backend.onrender.com
+      - key: NEXT_PUBLIC_FIREBASE_API_KEY
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_APP_ID
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+        sync: false
+
+  # ── Demo target (app-under-test) ─────────────────
+  - type: web
+    name: shotgun-app-under-test
+    runtime: node
+    plan: free                   # OK if free since this only serves the demo
+    region: oregon
+    rootDir: app-under-test
+    buildCommand: echo "no build"
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: "10000"

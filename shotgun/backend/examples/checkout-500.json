@@ -1,0 +1,8 @@
+{
+    "service": "checkout",
+    "symptom": "Checkout returns 500 on pay-submit, 80% error rate after last deploy that touched payment.js",
+    "suspect_url": "https://shotgun-staging.example.com/checkout",
+    "repro_flow": "flows/checkout_test.md",
+    "recent_diff_hint": "payment.js",
+    "source": "manual"
+}
