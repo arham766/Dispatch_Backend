@@ -265,8 +265,12 @@ async def installation_callback(
     await storage.upsert_installation(inst)
     logger.info("github_app: installation %s -> user %s", installation_id, user_id)
 
+    # Redirect to the frontend projects page so the user can pick repos.
+    # PUBLIC_DASHBOARD_URL is the frontend origin; PUBLIC_APP_URL is the
+    # backend.  Fall through to PUBLIC_APP_URL if the dashboard var isn't set.
+    frontend = settings.PUBLIC_DASHBOARD_URL or settings.PUBLIC_APP_URL
     return RedirectResponse(
-        f"{settings.PUBLIC_APP_URL}/onboarding/github?installation_id={installation_id}",
+        f"{frontend}/projects?installation_id={installation_id}",
         status_code=302,
     )
 
