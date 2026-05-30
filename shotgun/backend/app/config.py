@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     # ── Firebase Admin (server-side token verification) ──
     FIREBASE_PROJECT_ID: str = ""
     FIREBASE_SERVICE_ACCOUNT_JSON: str = ""    # one-line escaped JSON blob (preferred for cloud)
-    FIREBASE_SERVICE_ACCOUNT_FILE: str = ""    # absolute path to the JSON file (preferred for local)
+    FIREBASE_SERVICE_ACCOUNT_FILE: str = "/etc/secrets/trackyouridea-45c92-firebase-adminsdk-fbsvc-909243f66f.json"    # absolute path to the JSON file (preferred for local)
 
     # ── GitHub App (multi-tenant) ─────────────────────
     GITHUB_APP_ID: str = ""
