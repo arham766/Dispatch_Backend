@@ -127,7 +127,7 @@ async def run_flow(
             f.write(content)
         flow_file = temp_file
 
-    cmd = ["kane-cli", "testmd", "run", flow_file, "--agent", "--headless"]
+    cmd = ["kane-cli", "testmd", "run", flow_file, "--headless"]
 
     # Point the flow at the right environment
     env = {**os.environ, "STAGING_BASE_URL": base_url}

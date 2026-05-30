@@ -19,7 +19,7 @@ export default function KaneScreen({ events }: KaneScreenProps) {
   // Get current state
   const stateEvents = events.filter((e) => e.event === "state_change");
   const currentState = stateEvents.length > 0
-    ? stateEvents[stateEvents.length - 1].state
+    ? stateEvents[stateEvents.length - 1].state ?? null
     : null;
 
   // Get Kane steps

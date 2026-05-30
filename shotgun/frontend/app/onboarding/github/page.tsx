@@ -12,7 +12,7 @@ type Repo = {
   monitored_id: string | null; deploy_url: string | null;
 };
 
-export default function OnboardingGitHubPage() {
+function OnboardingGitHubPageContent() {
   const { user, loading, authedFetch } = useAuth();
   const router = useRouter();
   const params = useSearchParams();
@@ -167,25 +167,27 @@ export default function OnboardingGitHubPage() {
             </select>
           )}
 
-          <div style={{ display: "grid", gap: 10 }}>
+          <div className="repo-slider">
             {repos.length === 0 && <p style={{ color: "#64748b" }}>No repos accessible to this installation.</p>}
             {repos.map((r) => (
-              <div key={r.full_name} className="repo-row">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div key={r.full_name} className="repo-card">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" }}>
                   <div>
-                    <strong>{r.full_name}</strong>{" "}
-                    {r.private && <span style={{ fontSize: 10, color: "#64748b" }}>PRIVATE</span>}
-                    <div style={{ color: "#64748b", fontSize: 13 }}>{r.description}</div>
+                    <strong style={{ fontSize: "1.1rem" }}>{r.full_name}</strong>{" "}
+                    {r.private && <span className="badge badge-private">PRIVATE</span>}
+                    <div style={{ color: "#94a3b8", fontSize: "0.85rem", marginTop: "4px", minHeight: "40px" }}>
+                      {r.description || "No description provided."}
+                    </div>
                   </div>
                   {r.monitored ? (
-                    <span style={{ background: "#dcfce7", color: "#15803d", padding: "4px 8px", borderRadius: 6, fontSize: 12 }}>
-                      ✓ monitored
+                    <span className="badge badge-monitored">
+                      ✓ Monitored
                     </span>
                   ) : (
-                    <span style={{ color: "#94a3b8", fontSize: 12 }}>not monitored</span>
+                    <span className="badge badge-unmonitored">Not Monitored</span>
                   )}
                 </div>
-                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: "auto" }}>
                   <input
                     type="url"
                     placeholder="https://your-live-deploy.example.com"
@@ -193,17 +195,15 @@ export default function OnboardingGitHubPage() {
                     onChange={(e) =>
                       setDeployUrls((d) => ({ ...d, [r.full_name]: e.target.value }))
                     }
-                    style={{
-                      flex: 1, padding: "8px 10px",
-                      border: "1px solid #cbd5e1", borderRadius: 6,
-                    }}
+                    className="repo-input"
                   />
                   <button
                     onClick={() => provision(r)}
                     disabled={provisioning === r.full_name}
-                    className="primary-btn"
+                    className="btn btn-trigger"
+                    style={{ width: "100%", justifyContent: "center" }}
                   >
-                    {provisioning === r.full_name ? "…" : r.monitored ? "Re-sync" : "Monitor"}
+                    {provisioning === r.full_name ? "Syncing…" : r.monitored ? "Re-sync" : "Monitor Repo"}
                   </button>
                 </div>
               </div>
@@ -212,6 +212,16 @@ export default function OnboardingGitHubPage() {
         </Card>
       )}
     </main>
+  );
+}
+
+import { Suspense } from "react";
+
+export default function OnboardingGitHubPage() {
+  return (
+    <Suspense fallback={<div className="dashboard-shell"><p>Loading…</p></div>}>
+      <OnboardingGitHubPageContent />
+    </Suspense>
   );
 }
 
