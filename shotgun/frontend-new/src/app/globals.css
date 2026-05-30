@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+:root {
+  /* Tritone palette (dark mode) */
+  --color-ink: #1a1c38;
+  --color-flame: #e85d1a;
+  --color-cream: #ffe4a8;
+
+  /* Dark mode surfaces */
+  --color-bg: #000000;
+  --color-surface: #0a0a0a;
+  --color-surface-muted: #121212;
+  --color-surface-hover: #1a1a1a;
+  --color-border: #1f1f1f;
+  --color-border-strong: #2e2e2e;
+
+  /* Text */
+  --color-text: #f5ecd6;
+  --color-text-soft: #d8cfb9;
+  --color-text-muted: #8c89a8;
+
+  /* Status accents */
+  --color-success: #4ade80;
+  --color-warn: #f59e0b;
+  --color-danger: #f87171;
+}
+
+@theme inline {
+  --color-background: var(--color-bg);
+  --color-foreground: var(--color-text);
+  --color-ink: var(--color-ink);
+  --color-flame: var(--color-flame);
+  --color-cream: var(--color-cream);
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-surface-muted: var(--color-surface-muted);
+  --color-surface-hover: var(--color-surface-hover);
+  --color-border: var(--color-border);
+  --color-border-strong: var(--color-border-strong);
+  --color-text: var(--color-text);
+  --color-text-soft: var(--color-text-soft);
+  --color-text-muted: var(--color-text-muted);
+  --color-success: var(--color-success);
+  --color-warn: var(--color-warn);
+  --color-danger: var(--color-danger);
+  --font-sans: var(--font-season-sans);
+  --font-display: var(--font-signifier);
+  --font-mono: var(--font-abc-mono);
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+body {
+  font-family: var(--font-season-sans), Inter, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* shaders/react renders <div class="shader"><canvas .../></div>.
+   Force the wrapper to fill its parent so the canvas's 100% resolves. */
+.shader,
+.shader > canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+}
+
+.font-mono,
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-abc-mono), ui-monospace, SFMono-Regular, Menlo,
+    monospace;
+}
