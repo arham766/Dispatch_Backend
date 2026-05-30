@@ -274,16 +274,50 @@ async def run_incident(run: RunState) -> None:
         "awaiting_approval",
         summary=run.last_kane.summary if run.last_kane else "",
         confirmation_runs=settings.CONFIRMATION_RUNS,
+        auto_approving=settings.AUTO_APPROVE_AT_HUMAN_GATE,
     )
+    # The "✅ approve" call + email fires here regardless of mode — it's
+    # the on-call's notification that the fix is ready. The difference
+    # is whether SHIP blocks waiting for an explicit /approve.
     await notifications.publish(
         run, "kane_green",
         confirmation_runs=settings.CONFIRMATION_RUNS,
     )
-    logger.info("[%s] HUMAN_GATE: waiting for approval…", run.run_id)
 
-    await store.wait_for_approval(run.run_id)
+    if settings.AUTO_APPROVE_AT_HUMAN_GATE:
+        # Race the explicit /approve against a short auto-approve timer.
+        # If the user clicks the green button or the agent posts a "yes"
+        # decision in that window, that wins. Otherwise we proceed to
+        # SHIP automatically — the call/email already told them what's
+        # happening. A "stand down" click would set state to STANDBY
+        # before this window closes; we honour it.
+        logger.info(
+            "[%s] HUMAN_GATE: auto-approving in %ds (call out for awareness)",
+            run.run_id, settings.AUTO_APPROVE_DELAY_SECONDS,
+        )
+        try:
+            import asyncio as _asyncio
+            await _asyncio.wait_for(
+                store.wait_for_approval(run.run_id),
+                timeout=settings.AUTO_APPROVE_DELAY_SECONDS,
+            )
+            logger.info("[%s] HUMAN_GATE: approved by human", run.run_id)
+        except _asyncio.TimeoutError:
+            logger.info("[%s] HUMAN_GATE: auto-approving (no manual response)", run.run_id)
+        # If the user clicked "Stand down" the route flips state to
+        # STANDBY; respect that and exit.
+        if run.state == State.STANDBY:
+            logger.info("[%s] HUMAN_GATE: user stood down — aborting SHIP", run.run_id)
+            return
+    else:
+        logger.info("[%s] HUMAN_GATE: waiting for explicit approval…", run.run_id)
+        await store.wait_for_approval(run.run_id)
+        if run.state == State.STANDBY:
+            logger.info("[%s] HUMAN_GATE: user stood down — aborting SHIP", run.run_id)
+            return
+        logger.info("[%s] HUMAN_GATE: approved!", run.run_id)
+
     run.awaiting_approval = False
-    logger.info("[%s] HUMAN_GATE: approved!", run.run_id)
 
     # ── PROOF — one real Kane run before SHIP (audit artifact) ───
 

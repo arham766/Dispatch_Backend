@@ -86,9 +86,15 @@ export default function IncidentsPage() {
     })();
   }, [user, api]);
 
-  // Patch the current incident on live state changes (status + pr_url)
+  // Patch the current incident on live state changes (status + pr_url).
+  // Also: when a `patch` event arrives (Kiro just committed), pull the
+  // REAL diff from github.com/.../compare/main...branch.diff so the
+  // viewer flips from the synthetic placeholder to the actual change.
   useEffect(() => {
     if (events.length === 0 || !inc) return;
+    let needsDiffRefresh = false;
+    let newBranch: string | null = null;
+
     setInc((prev) => {
       if (!prev) return prev;
       let next = prev;
@@ -97,11 +103,30 @@ export default function IncidentsPage() {
           next = { ...next, status: mapStatus(ev.state) };
         } else if (ev.event === "pr_opened" && typeof ev.pr_url === "string") {
           next = { ...next, pr_url: ev.pr_url as string };
+        } else if (ev.event === "patch" && typeof ev.branch === "string") {
+          needsDiffRefresh = true;
+          newBranch = ev.branch as string;
         }
       }
       return next;
     });
-  }, [events, inc?.id]);
+
+    if (needsDiffRefresh && newBranch && me) {
+      const repo =
+        me.monitored_repos.find((r) =>
+          r.full_name.endsWith(`/${inc.service}`),
+        ) ||
+        me.monitored_repos[0] ||
+        null;
+      if (repo) {
+        fetchDiff({
+          repoFullName: repo.full_name,
+          headBranch: newBranch,
+          hint: "payment.js",
+        }).then(setDiff);
+      }
+    }
+  }, [events, inc?.id, me]);
 
   async function handleTrigger() {
     if (!me) return;

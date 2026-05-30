@@ -136,14 +136,55 @@ async def list_incidents():
 async def agentphone_decision(body: dict):
     """Spoken decision callback from AgentPhone.
 
-    Body: {"incident_id": "...", "decision": "fix" | "dismiss"}
+    Body: {"incident_id": "...", "decision": "fix" | "yes" | "ship" |
+                                              "dismiss" | "no" | "stand down"}
+
+    We treat the decision liberally: anything that sounds like approval
+    flips the run's approval gate so SHIP fires immediately, even if the
+    orchestrator is in the AUTO_APPROVE_AT_HUMAN_GATE grace window.
     """
     incident_id = body.get("incident_id")
-    decision = body.get("decision", "fix")
+    decision = (body.get("decision") or "").strip().lower()
 
     if not incident_id:
         raise HTTPException(status_code=400, detail="Missing incident_id")
 
-    store.set_decision(incident_id, decision)
-    logger.info("AgentPhone decision for %s: %s", incident_id, decision)
-    return {"ok": True}
+    # Normalize what the agent reports into one of {"fix", "dismiss"}.
+    approve_words = {"fix", "yes", "ship", "ship it", "approve", "open",
+                     "open the pr", "go", "go ahead", "do it", "proceed"}
+    dismiss_words = {"dismiss", "no", "stand down", "cancel", "abort", "stop"}
+
+    if decision in approve_words:
+        normalized = "fix"
+    elif decision in dismiss_words:
+        normalized = "dismiss"
+    else:
+        normalized = decision or "fix"   # default to approval if unclear
+
+    store.set_decision(incident_id, normalized)
+
+    # Also flip the HTTP-side approval gate so the orchestrator's
+    # wait_for_approval() returns immediately. Without this the
+    # voice decision only resolves the separate "voice gate" used by
+    # AgentPhone's place_decision_call → wait_for_decision flow.
+    if normalized == "fix":
+        try:
+            store.approve(incident_id)
+        except Exception:
+            pass
+    else:
+        run = store.get(incident_id)
+        if run is not None:
+            from app.models import State
+            run.state = State.STANDBY
+            run.awaiting_approval = False
+            try:
+                store.approve(incident_id)   # unblock the wait so loop can exit
+            except Exception:
+                pass
+
+    logger.info(
+        "AgentPhone decision for %s: %s → normalized=%s",
+        incident_id, decision, normalized,
+    )
+    return {"ok": True, "normalized": normalized}

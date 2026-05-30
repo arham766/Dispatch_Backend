@@ -71,8 +71,11 @@ export default function IncidentDetailPage({
 
   // Whenever a fresh state_change / pr_opened event arrives, patch the
   // displayed incident so the UI ticks live without a full refetch.
+  // On `patch`, also refetch the real GitHub diff so the viewer flips
+  // from the synthetic placeholder to the actual change.
   useEffect(() => {
     if (events.length === 0) return;
+    let newBranch: string | null = null;
     setIncident((prev) => {
       let next = prev;
       for (const ev of events) {
@@ -80,11 +83,37 @@ export default function IncidentDetailPage({
           next = { ...next, status: mapStatus(ev.state) };
         } else if (ev.event === "pr_opened" && typeof ev.pr_url === "string") {
           next = { ...next, pr_url: ev.pr_url as string, status: "RESOLVED" };
+        } else if (ev.event === "patch" && typeof ev.branch === "string") {
+          newBranch = ev.branch as string;
         }
       }
       return next;
     });
-  }, [events]);
+
+    if (newBranch) {
+      const branch = newBranch as string;
+      (async () => {
+        try {
+          const me = await api.me().catch(() => null);
+          const repo =
+            me?.monitored_repos.find((r) =>
+              r.full_name.endsWith(`/${incident.service}`),
+            ) ||
+            me?.monitored_repos[0] ||
+            null;
+          if (!repo) return;
+          const realDiff = await fetchDiff({
+            repoFullName: repo.full_name,
+            headBranch: branch,
+            hint: "payment.js",
+          });
+          setDiff(realDiff);
+        } catch {
+          /* keep current diff */
+        }
+      })();
+    }
+  }, [events, api, incident.service]);
 
   if (loading || !user) return null;
 

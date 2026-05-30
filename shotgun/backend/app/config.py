@@ -56,6 +56,15 @@ class Settings(BaseSettings):
     RETRY_BUDGET: int = 3
     CONFIRMATION_RUNS: int = 3
     KANE_TIMEOUT_SECONDS: int = 120
+    # When true, HUMAN_GATE does NOT block waiting for /approve. The
+    # email + AgentPhone call still fire as notifications, but SHIP
+    # runs immediately after. Use for demos and any tenant that wants
+    # automatic PR opening; turn off for the audit-grade flow where
+    # a human signs off on every PR.
+    AUTO_APPROVE_AT_HUMAN_GATE: bool = True
+    # Soft grace window before auto-approval fires, so the user has a
+    # chance to hit "Stand down" in the UI if they really want to abort.
+    AUTO_APPROVE_DELAY_SECONDS: int = 3
 
     # ── Recording (§15) ──────────────────────────────
     RECORD_LOOPS: bool = True
