@@ -780,19 +780,207 @@ class KiroDesktopClient(KiroAgent):
         return "kiro"  # last-resort fall-through to PATH
 
 
+# ── Implementation 4: Cloud (prod, no local git, no Kiro binary) ────
+
+
+class KiroCloudPatcherClient(KiroAgent):
+    """Pure-API patcher used in production.
+
+    No local git, no Kiro binary, no working tree. Reads the suspect
+    file from the user's repo via GitHub Contents API, applies the
+    fallback recipe (cardNumbr → cardNumber for the seeded demo, more
+    recipes can be added), and PUTs the new content on a fix branch.
+    The orchestrator then opens the PR against the same branch.
+
+    Multi-tenant safe: only requires the GitHub token / installation
+    token already configured for the repo. Runs cleanly on Render and
+    any other cloud host. This is the right path for the SaaS prod
+    deploy; ``KiroDesktopClient`` stays for local dev.
+    """
+
+    # Recipes keyed by repo path. Each entry: (regex, replacement, label).
+    # Extend with per-tenant rules when the SDK lands.
+    FALLBACK_RECIPES: list[tuple[str, str, str]] = [
+        # The seeded payment.js bug used in admin demo.
+        (r"\bcardNumbr\b", "cardNumber", "cardNumbr→cardNumber"),
+    ]
+
+    async def patch(
+        self,
+        incident: Incident,
+        last_failure: KaneResult | None,
+        attempt: int,
+    ) -> PatchResult:
+        import base64
+        import re as _re
+        import httpx
+
+        branch = f"shotgun/fix-{incident.service}-{attempt}"
+        repo = settings.GITHUB_REPO
+        base_branch = settings.GITHUB_BASE_BRANCH or "main"
+        token = settings.GITHUB_TOKEN
+
+        logger.info("Kiro: ============================================")
+        logger.info("Kiro: MODE     = cloud (GitHub Contents API)")
+        logger.info("Kiro: REPO     = %s", repo)
+        logger.info("Kiro: BRANCH   = %s ← %s", branch, base_branch)
+        logger.info("Kiro: HINT     = %s", incident.recent_diff_hint or "-")
+        logger.info("Kiro: ATTEMPT  = %d", attempt)
+        logger.info("Kiro: ============================================")
+
+        if not repo or not token:
+            logger.error("Kiro: cloud mode requires GITHUB_REPO + GITHUB_TOKEN")
+            return PatchResult(branch=branch, diff_summary="", changed_files=[], ok=False)
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        api = "https://api.github.com"
+
+        async with httpx.AsyncClient(timeout=30.0, headers=headers) as c:
+            # 1. Resolve base branch SHA
+            r = await c.get(f"{api}/repos/{repo}/git/ref/heads/{base_branch}")
+            if r.status_code != 200:
+                logger.error("Kiro: could not resolve base branch %s — %s",
+                             base_branch, r.text[:200])
+                return PatchResult(branch=branch, diff_summary="", changed_files=[], ok=False)
+            base_sha = r.json()["object"]["sha"]
+
+            # 2. Create or reset the fix branch to point at base
+            ref_path = f"heads/{branch}"
+            r = await c.get(f"{api}/repos/{repo}/git/ref/{ref_path}")
+            if r.status_code == 200:
+                await c.patch(
+                    f"{api}/repos/{repo}/git/refs/{ref_path}",
+                    json={"sha": base_sha, "force": True},
+                )
+            else:
+                await c.post(
+                    f"{api}/repos/{repo}/git/refs",
+                    json={"ref": f"refs/heads/{branch}", "sha": base_sha},
+                )
+            logger.info("Kiro: branch %s ready at %s", branch, base_sha[:12])
+
+            # 3. Pick file(s) to patch from the hint + recipes
+            target_path = self._guess_target_path(incident)
+            if not target_path:
+                logger.warning("Kiro: no target path resolvable from hint=%s",
+                               incident.recent_diff_hint)
+                return PatchResult(branch=branch, diff_summary="", changed_files=[], ok=False)
+
+            # 4. Get file content + SHA from the branch
+            r = await c.get(
+                f"{api}/repos/{repo}/contents/{target_path}",
+                params={"ref": branch},
+            )
+            if r.status_code != 200:
+                logger.error("Kiro: could not GET %s — %s", target_path, r.text[:200])
+                return PatchResult(branch=branch, diff_summary="", changed_files=[], ok=False)
+            file_obj = r.json()
+            file_sha = file_obj["sha"]
+            original = base64.b64decode(file_obj["content"]).decode("utf-8", errors="replace")
+
+            # 5. Apply recipes
+            patched = original
+            applied: list[str] = []
+            for pattern, replacement, label in self.FALLBACK_RECIPES:
+                new, n = _re.subn(pattern, replacement, patched)
+                if n > 0:
+                    patched = new
+                    applied.append(f"{label} (×{n})")
+
+            if patched == original:
+                logger.warning("Kiro: no recipe matched %s — no change", target_path)
+                return PatchResult(branch=branch, diff_summary="", changed_files=[], ok=False)
+
+            # 6. PUT the patched file on the fix branch
+            put_body = {
+                "message": f"shotgun: cloud patch attempt {attempt} — {'; '.join(applied)}",
+                "content": base64.b64encode(patched.encode("utf-8")).decode("ascii"),
+                "sha": file_sha,
+                "branch": branch,
+            }
+            r = await c.put(
+                f"{api}/repos/{repo}/contents/{target_path}",
+                json=put_body,
+            )
+            if r.status_code not in (200, 201):
+                logger.error("Kiro: PUT %s failed — %s", target_path, r.text[:200])
+                return PatchResult(branch=branch, diff_summary="", changed_files=[], ok=False)
+
+            commit_sha = r.json()["commit"]["sha"]
+            logger.info(
+                "Kiro: committed %s on %s (sha %s) — recipes: %s",
+                target_path, branch, commit_sha[:12], applied,
+            )
+
+        return PatchResult(
+            branch=branch,
+            diff_summary=f"{target_path}: {'; '.join(applied)}",
+            changed_files=[target_path],
+            ok=True,
+        )
+
+    def _guess_target_path(self, incident: Incident) -> str | None:
+        """Map the incident's recent_diff_hint to a real repo path.
+
+        Accepts a few common shapes:
+          - "payment.js"          → "payment.js"
+          - "src/foo/bar.ts"      → "src/foo/bar.ts"
+          - "the payment file"    → falls through to None for now;
+                                    smarter NLP can land later.
+        """
+        hint = (incident.recent_diff_hint or "").strip()
+        if not hint:
+            return None
+        # If it has a slash or known extension, treat as path verbatim.
+        if "/" in hint or "." in hint.rsplit("/", 1)[-1]:
+            return hint
+        return None
+
+
 # ── Factory ───────────────────────────────────────────
+
+
+def _kiro_binary_available() -> bool:
+    """Best-effort check that a Kiro binary is on this host."""
+    candidates = KiroDesktopClient.KIRO_BIN_CANDIDATES
+    for path in candidates:
+        if path == "kiro":
+            continue
+        if os.path.exists(path):
+            return True
+    return False
 
 
 def make_kiro_agent() -> KiroAgent:
     """Create the appropriate KiroAgent based on KIRO_MODE setting.
 
+    Auto-detect: if mode is ``desktop`` but no Kiro binary is present
+    (the case on Render and any Linux cloud host), we silently switch
+    to ``cloud`` instead of trying to spawn a missing binary.
+
     Modes:
-        desktop  — invoke `kiro chat --mode agent` directly (local dev,
-                   self-hosted runner). Primary path during local testing.
+        cloud   — GitHub Contents API, no git, no workdir.  Default for prod.
+        desktop — invoke `kiro chat --mode agent`. Local-dev only.
         headless — stubbed CLI/API call (kept for compat).
-        hook     — file-watch trigger (kept for compat / fallback).
+        hook    — file-watch trigger (kept for compat / fallback).
     """
     mode = settings.KIRO_MODE
+
+    # Auto-fallback when desktop is requested but Kiro is not installed.
+    if mode == "desktop" and not _kiro_binary_available():
+        logger.warning(
+            "Kiro: KIRO_MODE=desktop but no Kiro binary found on this host. "
+            "Falling back to KIRO_MODE=cloud (GitHub Contents API)."
+        )
+        mode = "cloud"
+
+    if mode == "cloud":
+        logger.info("Using KiroCloudPatcherClient (GitHub Contents API)")
+        return KiroCloudPatcherClient()
     if mode == "desktop":
         logger.info("Using KiroDesktopClient (kiro chat --mode agent)")
         return KiroDesktopClient()

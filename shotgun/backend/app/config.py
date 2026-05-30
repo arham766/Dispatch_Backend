@@ -37,7 +37,13 @@ class Settings(BaseSettings):
     STAGING_BASE_URL: str = "https://dispatch-backend-i50g.onrender.com"
 
     # ── Kiro ──────────────────────────────────────────
-    KIRO_MODE: Literal["desktop", "headless", "hook"] = "hook"
+    # Modes:
+    #   cloud   — prod default. GitHub Contents API, no local git, no
+    #             Kiro binary. Works on Render / any cloud host.
+    #   desktop — local dev only. Invokes `kiro chat --mode agent`.
+    #   hook    — legacy fallback. File-watch trigger.
+    #   headless — stub kept for compat.
+    KIRO_MODE: Literal["cloud", "desktop", "headless", "hook"] = "cloud"
     KIRO_WORKDIR: str = "/tmp"
     KIRO_TRIGGER_FILE: str = ".shotgun/trigger.json"
 

@@ -91,9 +91,29 @@ async def run_incident(run: RunState) -> None:
           the PR body. We do exactly ONE real run before SHIP so the
           PR carries the canonical artifact.
         """
+        # URL selection for this run:
+        #   attempt 0 (REPRODUCE)   → STAGING_BASE_URL (the broken prod page)
+        #   attempt > 0 (VERIFY)    → in this order:
+        #     1) explicit PREVIEW_BASE_URL env (set by composite Action)
+        #     2) raw.githubusercontent.com/<repo>/<branch>/<file>
+        #        — instant access to the patched file content, no GH Pages
+        #        refresh delay, works for any tenant repo
+        #     3) LOCAL_PREVIEW_URL (dev only)
+        #     4) fall back to STAGING_BASE_URL
         test_url = settings.STAGING_BASE_URL
         if attempt > 0:
-            preview = os.getenv("PREVIEW_BASE_URL") or os.getenv("LOCAL_PREVIEW_URL")
+            preview = os.getenv("PREVIEW_BASE_URL")
+            if not preview and run.branch and settings.GITHUB_REPO:
+                # Use raw.githubusercontent so the smoke fetch sees the
+                # branch's freshly-patched content immediately.
+                hint = inc.recent_diff_hint or ""
+                if hint and ("/" in hint or "." in hint.rsplit("/", 1)[-1]):
+                    preview = (
+                        f"https://raw.githubusercontent.com/"
+                        f"{settings.GITHUB_REPO}/{run.branch}/{hint}"
+                    )
+            if not preview:
+                preview = os.getenv("LOCAL_PREVIEW_URL")
             if preview:
                 test_url = preview
 

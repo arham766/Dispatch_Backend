@@ -21,6 +21,7 @@ Use it on a route:
 from __future__ import annotations
 
 import json
+import os
 import logging
 from dataclasses import dataclass
 
@@ -78,21 +79,37 @@ def _init_admin() -> object:
         return None
 
     cred = None
-    if settings.FIREBASE_SERVICE_ACCOUNT_FILE:
+    # Try file path first IF it exists. If the path is set but missing
+    # (e.g. dev's Windows path persisted into a Render env var), don't
+    # bail — fall through to the inline JSON so the deploy still works.
+    file_path = settings.FIREBASE_SERVICE_ACCOUNT_FILE
+    if file_path and os.path.isfile(file_path):
         try:
-            cred = credentials.Certificate(settings.FIREBASE_SERVICE_ACCOUNT_FILE)
+            cred = credentials.Certificate(file_path)
         except Exception as exc:
-            logger.error("auth: bad service-account file — %s", exc)
-            return None
-    elif settings.FIREBASE_SERVICE_ACCOUNT_JSON:
+            logger.error("auth: bad service-account file at %s — %s", file_path, exc)
+            cred = None
+    elif file_path:
+        logger.warning(
+            "auth: FIREBASE_SERVICE_ACCOUNT_FILE=%s does not exist on this host; "
+            "trying FIREBASE_SERVICE_ACCOUNT_JSON instead.",
+            file_path,
+        )
+
+    if cred is None and settings.FIREBASE_SERVICE_ACCOUNT_JSON:
         try:
             info = json.loads(settings.FIREBASE_SERVICE_ACCOUNT_JSON)
             cred = credentials.Certificate(info)
         except Exception as exc:
             logger.error("auth: bad service-account JSON — %s", exc)
             return None
-    else:
-        logger.warning("auth: no Firebase credentials configured")
+
+    if cred is None:
+        logger.warning(
+            "auth: no Firebase credentials configured "
+            "(set FIREBASE_SERVICE_ACCOUNT_JSON for cloud deploy, "
+            "or FIREBASE_SERVICE_ACCOUNT_FILE pointing at a real path)"
+        )
         return None
 
     try:
