@@ -209,7 +209,7 @@ export interface ApiClient {
     deploy_url: string;
     deploy_provider?: string;
   }): Promise<{ ok: boolean; repo_id: string }>;
-  githubInstallUrl(): string;
+  githubInstallUrl(): Promise<string>;
 }
 
 /**
@@ -302,8 +302,15 @@ export function makeApi(
       await expectOk(r);
       return r.json();
     },
-    githubInstallUrl() {
-      return `${API_BASE}/api/github/install`;
+    async githubInstallUrl() {
+      // Grab the Firebase ID token so the backend can link the
+      // GitHub App installation back to this user.  The /install
+      // endpoint is a plain browser redirect so we can't use an
+      // Authorization header — the token rides as a query param.
+      const { getIdToken } = await import("./firebase");
+      const tok = await getIdToken();
+      const base = `${API_BASE}/api/github/install`;
+      return tok ? `${base}?token=${encodeURIComponent(tok)}` : base;
     },
   };
 }

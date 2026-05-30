@@ -48,10 +48,15 @@ export default function ProjectsPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [draftUrl, setDraftUrl] = useState<string>("");
   const [provisioning, setProvisioning] = useState<string | null>(null);
+  const [installUrl, setInstallUrl] = useState<string>("#");
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
   }, [user, loading, router]);
+
+  useEffect(() => {
+    api.githubInstallUrl().then(setInstallUrl).catch(() => {});
+  }, [api]);
 
   useEffect(() => {
     if (!user) return;
@@ -215,7 +220,7 @@ export default function ProjectsPage() {
               <li className="text-white/40 text-sm">
                 No repositories yet.{" "}
                 <Link
-                  href={api.githubInstallUrl()}
+                  href={installUrl}
                   className="text-white underline underline-offset-4"
                 >
                   Connect GitHub
@@ -322,7 +327,7 @@ export default function ProjectsPage() {
           {me && me.installations.length === 0 ? (
             <div className="mt-8 pt-6 border-t border-white/10">
               <Link
-                href={api.githubInstallUrl()}
+                href={installUrl}
                 className="inline-flex w-full items-center justify-center gap-2.5 text-sm text-white bg-white/10 hover:bg-white/20 rounded-md px-4 py-3 transition-colors"
               >
                 <HugeiconsIcon

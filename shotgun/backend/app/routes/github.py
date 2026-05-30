@@ -184,25 +184,53 @@ async def manifest_callback(request: Request, code: str, state: str | None = Non
 @router.get("/install")
 async def install_redirect(
     request: Request,
-    user: FirebaseUser = Depends(require_user),
+    token: str | None = None,
+    user: FirebaseUser | None = Depends(current_user),
 ):
     """Redirect the signed-in user to the App's install URL.
 
-    Sets a cookie tying the upcoming installation_id to this user so the
-    callback can record ownership.
+    The frontend navigates here via a plain ``<a href>`` link, so no
+    ``Authorization`` header is available.  To link the installation
+    back to the Firebase user we accept the token in two ways:
+
+      1. ``Authorization: Bearer <token>`` header (API calls)
+      2. ``?token=<id_token>`` query param (browser navigation)
+
+    If neither is present we still redirect — the installation callback
+    will prompt the user to sign in and link it then.
     """
     if not settings.GITHUB_APP_ID:
         raise HTTPException(503, "GitHub App not registered yet — visit /api/github/manifest first")
+
+    # If we didn't get the user from the header, try the query param.
+    if user is None and token:
+        try:
+            from app.auth import _init_admin, FirebaseUser as _FU
+            app = _init_admin()
+            if app:
+                from firebase_admin import auth as fb_auth
+                claims = fb_auth.verify_id_token(token)
+                user = _FU(
+                    uid=claims["uid"],
+                    email=claims.get("email"),
+                    name=claims.get("name"),
+                    picture=claims.get("picture"),
+                    email_verified=bool(claims.get("email_verified")),
+                )
+        except Exception as exc:
+            logger.warning("install: token query-param verify failed — %s", exc)
 
     slug = os.environ.get("GITHUB_APP_SLUG", "shotgun")
     install_url = f"https://github.com/apps/{slug}/installations/new"
 
     state = secrets.token_urlsafe(24)
     response = RedirectResponse(install_url, status_code=302)
-    response.set_cookie(
-        INSTALL_STATE_COOKIE, f"{user.uid}|{state}",
-        httponly=True, samesite="lax", max_age=900,
-    )
+
+    if user:
+        response.set_cookie(
+            INSTALL_STATE_COOKIE, f"{user.uid}|{state}",
+            httponly=True, samesite="lax", max_age=900,
+        )
     return response
 
 

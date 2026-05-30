@@ -34,6 +34,7 @@ export default function IncidentsPage() {
   const [name, setName] = useState<string>("");
   const [triggering, setTriggering] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [installUrl, setInstallUrl] = useState<string>("#");
 
   // Live event stream is the source of truth for both the LiveLogs and
   // Notifications components. Subscribing here means the dashboard tells
@@ -43,6 +44,11 @@ export default function IncidentsPage() {
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
   }, [user, loading, router]);
+
+  // Resolve the async GitHub install URL once.
+  useEffect(() => {
+    api.githubInstallUrl().then(setInstallUrl).catch(() => {});
+  }, [api]);
 
   // Load me + latest incident
   useEffect(() => {
@@ -194,7 +200,7 @@ export default function IncidentsPage() {
                     step right on the dashboard. */}
                 {!hasInstall ? (
                   <a
-                    href={api.githubInstallUrl()}
+                    href={installUrl}
                     className="inline-flex items-center gap-2 text-sm text-black bg-white hover:bg-white/90 rounded-md px-4 py-2 transition-colors"
                   >
                     Connect GitHub →
