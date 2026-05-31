@@ -131,10 +131,10 @@ async def _handle_installation(payload: dict) -> None:
         return
 
     if action == "deleted":
-        # Nuke from all users; storage is best-effort here.
-        for stored in await storage.get_installations_for_user("*"):
-            if stored.installation_id == installation_id:
-                await storage.delete_installation(stored.user_id, installation_id)
+        # Nuke the row by looking up the installation_id directly.
+        existing = await storage.get_installation(installation_id)
+        if existing:
+            await storage.delete_installation(existing.user_id, installation_id)
         logger.info("webhook: installation %s deleted", installation_id)
         return
 

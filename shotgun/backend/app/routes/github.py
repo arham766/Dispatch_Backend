@@ -239,16 +239,19 @@ async def installation_callback(
     request: Request,
     installation_id: int,
     setup_action: str | None = None,
+    code: str | None = None,
 ):
     """GitHub redirects here after the user installs the App.
 
     We read the cookie set in /install to learn which Firebase user
     completed the install, then persist the installation under their uid.
+
+    If the cookie is missing (e.g. cross-browser install, cleared cookies)
+    we still accept the install and redirect to /projects — the webhook
+    handler already dropped a ``pending:`` placeholder row.
     """
     cookie = request.cookies.get(INSTALL_STATE_COOKIE) or ""
     user_id = cookie.split("|", 1)[0] if "|" in cookie else None
-    if not user_id:
-        raise HTTPException(400, "Missing install state — please retry from /onboarding/github")
 
     try:
         info = await github_app.get_installation_info(installation_id)
@@ -256,18 +259,32 @@ async def installation_callback(
         logger.error("github_app: could not fetch installation %s — %s", installation_id, exc)
         raise HTTPException(502, f"Could not fetch installation: {exc}")
 
-    inst = storage.Installation(
-        user_id=user_id,
-        installation_id=installation_id,
-        account_login=info["account"]["login"],
-        account_type=info["account"]["type"],
-    )
-    await storage.upsert_installation(inst)
-    logger.info("github_app: installation %s -> user %s", installation_id, user_id)
+    account_login = info["account"]["login"]
+    account_type = info["account"]["type"]
+
+    if user_id:
+        # Remove any pending placeholder the webhook may have created
+        # so we don't end up with two rows for the same installation_id.
+        existing = await storage.get_installation(installation_id)
+        if existing and existing.user_id.startswith("pending:"):
+            await storage.delete_installation(existing.user_id, installation_id)
+            logger.info("github_app: replaced pending installation for %s", account_login)
+
+        inst = storage.Installation(
+            user_id=user_id,
+            installation_id=installation_id,
+            account_login=account_login,
+            account_type=account_type,
+        )
+        await storage.upsert_installation(inst)
+        logger.info("github_app: installation %s -> user %s", installation_id, user_id)
+    else:
+        logger.warning(
+            "github_app: no cookie for installation %s — pending row only",
+            installation_id,
+        )
 
     # Redirect to the frontend projects page so the user can pick repos.
-    # PUBLIC_DASHBOARD_URL is the frontend origin; PUBLIC_APP_URL is the
-    # backend.  Fall through to PUBLIC_APP_URL if the dashboard var isn't set.
     frontend = settings.PUBLIC_DASHBOARD_URL or settings.PUBLIC_APP_URL
     return RedirectResponse(
         f"{frontend}/projects?installation_id={installation_id}",
